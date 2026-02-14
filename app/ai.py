@@ -3,6 +3,7 @@ import re
 import random
 from typing import Dict, Any, List
 import httpx
+import json
 
 from app.models import Category, Urgency
 
@@ -65,8 +66,9 @@ def _random_reasonable_price(category: str, items: List[Dict[str, Any]]) -> floa
     val = random.uniform(lo, hi) * scale
     return round(max(5.0, min(250.0, val)), 2)
 
-# ---- Optional OpenAI JSON mode (wire if you want) ----
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# ---- Gemini configuration ----
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 SYSTEM_PROMPT = """You are an intake parser for a crisis mutual-aid app.
 Return ONLY JSON with this schema:
@@ -81,48 +83,10 @@ Rules:
 - Be conservative and realistic.
 - estimated_total must be between 5 and 250.
 - If uncertain: category="other", urgency_window="today", severity=2, items=[...], estimated_total reasonable.
+Return JSON only. No markdown. No extra text.
 """
 
-async def ai_invoke(text: str) -> Dict[str, Any]:
-    # If no key, use fallback
-    if not OPENAI_API_KEY:
-        cat = _guess_category(text)
-        urg = _guess_urgency(text)
-        sev = _guess_severity(cat, text)
-        items = _extract_items(text, cat)
-        price = _random_reasonable_price(cat, items)
-        return {"draft": {
-            "category": cat,
-            "urgency_window": urg,
-            "severity": sev,
-            "items": items,
-            "estimated_total": price,
-            "notes": ""
-        }, "confidence": 0.55}
-
-    # OpenAI-style call (works with many compatible endpoints)
-    # If you use another provider, keep the same JSON contract.
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
-    payload = {
-        "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": text}
-        ],
-    }
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.post(url, headers=headers, json=payload)
-        r.raise_for_status()
-        data = r.json()
-        content = data["choices"][0]["message"]["content"]
-
-    # Validate minimally + clamp
-    import json
-    raw = json.loads(content)
-
+def _clamp_and_sanitize(raw: dict) -> Dict[str, Any]:
     cat = raw.get("category", "other")
     urg = raw.get("urgency_window", "today")
     sev = int(raw.get("severity", 2))
@@ -135,7 +99,6 @@ async def ai_invoke(text: str) -> Dict[str, Any]:
         urg = "today"
     sev = max(1, min(5, sev))
 
-    # sanitize items
     fixed_items = []
     for it in items[:6]:
         name = str(it.get("name", "")).strip()[:60]
@@ -152,11 +115,108 @@ async def ai_invoke(text: str) -> Dict[str, Any]:
 
     est = round(max(5.0, min(250.0, est)), 2)
 
-    return {"draft": {
+    return {
         "category": cat,
         "urgency_window": urg,
         "severity": sev,
         "items": fixed_items,
         "estimated_total": est,
         "notes": ""
-    }, "confidence": 0.8}
+    }
+
+def _extract_json_object(text: str) -> dict:
+    """
+    Gemini sometimes returns extra text. This pulls the first top-level {...} block.
+    """
+    text = text.strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No JSON object found in model output")
+    candidate = text[start:end+1]
+    return json.loads(candidate)
+
+async def ai_invoke(text: str) -> Dict[str, Any]:
+    # If no key, use fallback
+    if not GEMINI_API_KEY:
+        cat = _guess_category(text)
+        urg = _guess_urgency(text)
+        sev = _guess_severity(cat, text)
+        items = _extract_items(text, cat)
+        price = _random_reasonable_price(cat, items)
+        return {"draft": {
+            "category": cat,
+            "urgency_window": urg,
+            "severity": sev,
+            "items": items,
+            "estimated_total": price,
+            "notes": ""
+        }, "confidence": 0.55}
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    headers = {
+        "x-goog-api-key": GEMINI_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    # Put system+user into one user prompt (simple + reliable for hackathon)
+    prompt = f"{SYSTEM_PROMPT}\n\nUser text:\n{text}\n\nReturn ONLY the JSON object."
+
+    body = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.post(url, headers=headers, json=body)
+        r.raise_for_status()
+        data = r.json()
+
+    # Gemini text lives here:
+    # candidates[0].content.parts[0].text
+    try:
+        content_text = data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        # If Gemini returns something unexpected, fall back
+        cat = _guess_category(text)
+        urg = _guess_urgency(text)
+        sev = _guess_severity(cat, text)
+        items = _extract_items(text, cat)
+        price = _random_reasonable_price(cat, items)
+        return {"draft": {
+            "category": cat,
+            "urgency_window": urg,
+            "severity": sev,
+            "items": items,
+            "estimated_total": price,
+            "notes": ""
+        }, "confidence": 0.45}
+
+    # Parse JSON (with robust extraction)
+    try:
+        raw = _extract_json_object(content_text)
+    except Exception:
+        # fallback if parsing fails
+        cat = _guess_category(text)
+        urg = _guess_urgency(text)
+        sev = _guess_severity(cat, text)
+        items = _extract_items(text, cat)
+        price = _random_reasonable_price(cat, items)
+        return {"draft": {
+            "category": cat,
+            "urgency_window": urg,
+            "severity": sev,
+            "items": items,
+            "estimated_total": price,
+            "notes": ""
+        }, "confidence": 0.45}
+
+    draft = _clamp_and_sanitize(raw)
+    return {"draft": draft, "confidence": 0.8}
