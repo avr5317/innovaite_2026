@@ -1,5 +1,11 @@
 from datetime import datetime, timezone
 
+def _as_utc(dt: datetime) -> datetime:
+    # PyMongo commonly returns naive UTC datetimes; normalize before arithmetic.
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
 def compute_funding_goal(estimated_total: float, requester_afford: float) -> float:
     return max(round(estimated_total - requester_afford, 2), 0.0)
 
@@ -16,7 +22,7 @@ def severity_weight(sev: int) -> float:
 
 def age_hours(created_at) -> float:
     now = datetime.now(timezone.utc)
-    delta = now - created_at
+    delta = now - _as_utc(created_at)
     return max(0.0, delta.total_seconds() / 3600.0)
 
 def rank_score(urgency: str, severity: int, progress: float, created_at) -> float:
