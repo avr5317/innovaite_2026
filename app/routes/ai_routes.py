@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.models import AInvokeIn, AInvokeOut
-from app.ai import ai_invoke
+from app.llm import ai_invoke
 
 router = APIRouter()
 
