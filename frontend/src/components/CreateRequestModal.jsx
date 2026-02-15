@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { invokeAI, createRequest } from '../api/requests';
 
@@ -19,7 +19,66 @@ export default function CreateRequestModal({ onClose, onCreated, pickedLocation 
   const [afford, setAfford] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
   const location = pickedLocation ?? DEFAULT_LOCATION;
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    setSpeechSupported(true);
+    const recognition = new SpeechRecognition();
+    recognition.lang = navigator.language || 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = false;
+
+    recognition.onresult = (event) => {
+      let chunk = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          chunk += `${result[0]?.transcript ?? ''} `;
+        }
+      }
+      const incoming = chunk.trim();
+      if (!incoming) return;
+      setText((prev) => {
+        if (!prev.trim()) return incoming;
+        return `${prev.trim()} ${incoming}`;
+      });
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error === 'not-allowed') {
+        setError('Microphone permission denied.');
+      } else if (event.error !== 'aborted') {
+        setError('Voice input failed. Try again.');
+      }
+      setListening(false);
+    };
+
+    recognition.onend = () => setListening(false);
+    recognitionRef.current = recognition;
+
+    return () => {
+      recognition.stop();
+      recognitionRef.current = null;
+    };
+  }, []);
+
+  const toggleVoiceInput = () => {
+    if (!recognitionRef.current) return;
+    if (listening) {
+      recognitionRef.current.stop();
+      setListening(false);
+      return;
+    }
+    setError(null);
+    recognitionRef.current.start();
+    setListening(true);
+  };
 
   const handleSubmitText = async () => {
     if (!text.trim()) return;
@@ -129,6 +188,21 @@ export default function CreateRequestModal({ onClose, onCreated, pickedLocation 
                     rows={4}
                     className="w-full rounded-xl bg-white/10 border border-white/20 px-4 py-3 text-white placeholder-gray-500 resize-none"
                   />
+                  <div className="flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={toggleVoiceInput}
+                      disabled={!speechSupported || loading}
+                      className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white text-sm font-medium"
+                    >
+                      {listening ? 'Stop voice input' : 'Use voice input'}
+                    </button>
+                    {!speechSupported && (
+                      <span className="text-xs text-gray-500">
+                        Voice input is not supported in this browser.
+                      </span>
+                    )}
+                  </div>
                   {error && <p className="text-red-400 text-sm">{error}</p>}
                   <button
                     type="button"

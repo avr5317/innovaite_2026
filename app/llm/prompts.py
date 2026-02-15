@@ -10,6 +10,9 @@ Return ONLY JSON with this schema:
 Rules:
 - Be conservative and realistic.
 - estimated_total must be between 5 and 250.
+- User input may be in any language.
+- Always understand the original language, then return the structured output in English.
+- Translate item names and intent into concise English in the JSON fields.
 - If uncertain: category="other", urgency_window="today", severity=2, items=[...], estimated_total reasonable.
 Return JSON only. No markdown. No extra text.
 """
