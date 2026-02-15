@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { CATEGORY_COLORS } from './MapView';
 
 const CATEGORY_ICONS = {
   meds: '💊',
@@ -23,15 +24,17 @@ const URGENCY_STYLES = {
 export default function RequestCard({ request, onClick, isSelected }) {
   const progress = Math.min(1, (request.progress ?? 0));
   const remaining = Math.max(0, (request.funding_goal ?? 0) - (request.funded_amount ?? 0));
+  const categoryColor = CATEGORY_COLORS[request.category] || CATEGORY_COLORS.other;
 
   return (
     <motion.div
       layout
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
+      style={{ borderLeftColor: categoryColor }}
       className={`
         rounded-2xl border border-white/10 bg-white/10 backdrop-blur-xl p-4 cursor-pointer
-        transition-all duration-200
+        transition-all duration-200 border-l-4
         ${isSelected ? 'ring-2 ring-emerald-400 shadow-lg' : 'hover:bg-white/15'}
       `}
       onClick={() => onClick?.(request)}
