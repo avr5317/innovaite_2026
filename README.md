@@ -71,10 +71,21 @@ Open:
 - Google AI Studio / Gemini API key
 
 ## Screenshots
-TBD
+### Map View
+![Map View](screenshots/Map.png)
+
+### AI Request Prioritization
+![AI Request Prioritization](screenshots/AI_request_prioritization.png)
+
+### Claim Requests
+![Claim Requests](screenshots/claim_requests.png)
+
+### Crisis Mode
+![Crisis Mode](screenshots/crisis_mode.png)
 
 ## Collaborators
 - [Vaibhav Thalanki](https://github.com/Vaibhav-Thalanki)
 - [Ackshay N R](https://github.com/Ackshay206)
 - [Vinaya Rekha](https://github.com/avr5317)
+
 
